@@ -70,7 +70,15 @@ int child_entry(void* arg) {
     syscall_write(": getpid()  = ", getpid());  // What is our thread group/process id
     syscall_write(": gettid()  = ", gettid());  // The ID of this thread!
     syscall_write(": getuid()  = ", getuid());  // What is the user id of this thread.
-
+    if(arg != NULL){
+        int uid_map_fd;
+        if((uid_map_fd = open("/proc/self/uid_map", O_RDWR)) == -1) perror("open");
+        char* uid_map = "0 0 1\n";
+        if(write(uid_map_fd,uid_map, sizeof(uid_map) - 1) == -1) perror("write");
+        close(uid_map_fd);
+        syscall_write(": getuid()  = ", getuid());
+        syscall_write(": setuid() = ", setuid(0));
+    }
 
     // We increment the global counter in one second intervals. If we
     // are in our own address space, this will have no influence on
@@ -104,13 +112,28 @@ int main(int argc, char *argv[]) {
     int flags = 0;
     void *arg = NULL;
     if (!strcmp(argv[1], "fork")) {
-    } else {
+        flags = SIGCHLD;
+    } else if(!strcmp(argv[1], "chimera")){
+        flags = CLONE_VM;
+    }else if(!strcmp(argv[1], "thread")){
+        /*
+        *Since Linux 2.5.35, the flags mask must also include CLONE_SIGHAND if  CLONE_THREAD
+        *is  specified  (and  note  that,  since  Linux  2.6.0,  CLONE_SIGHAND also requires
+        *CLONE_VM to be included).
+        */
+        flags = CLONE_VM | CLONE_THREAD | CLONE_SIGHAND;
+    }else if(!strcmp(argv[1], "user")){
+        flags = CLONE_NEWUSER;
+        /*We need to signal the child that we want to override /proc/self/uid_map*/
+        arg = 1;
+    }else{
         // TODO: Implement multiple clone modes.
         printf("Invalid clone() mode: %s\n", argv[1]);
         return -1;
     }
-    // TODO: Call clone here!
-
+    int child_pid = clone(child_entry, &stack[4096] , flags, arg);
+    syscall_write("Created process: ", child_pid);
+    if(child_pid == -1) perror("clone");
     syscall_write("\n!!!!! Press C-c to terminate. !!!!!", 0);
     while(counter < 4) {
         syscall_write("counter = ", counter);
